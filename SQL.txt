@@ -1,0 +1,92 @@
+Task 1)
+
+FATTI (IdMuseo, IdTempo, IdBiglietto, IdServizio, Incasso)
+TEMPO (IdTempo, FasciaOraria, Data, Mese, Bimestre, Trimestre, Semestre, 
+Anno, Feriale)
+BIGLIETTO (IdBiglietto, Tipologia, ModalitaAcquisto)
+MUSEO (IdMuseo, NomeMuseo, Città, Provincia, Regione, Categoria)
+SERVIZIO (IdServizio, S1, S2, S3, S4, S5, S6, S7, S8, S9, S10)
+
+
+Task 2)
+
+Query a)
+SELECT B.Tipologia, T.Mese, SUM(F.Incasso)/COUNT(DISTINCT(T.Data)) AS MediaGiornaliera, SUM(SUM(Incasso)) OVER (PARTITION BY T.Anno ORDER BY T.Mese ROWS UNBOUNDED PRECEDING) AS IncassiComulativi, 100*(COUNT(*)) / SUM(COUNT(*)) OVER (PARTITION BY T.Mese) AS PercentualeBiglietti
+FROM BIGLIETTO B, FATTI F, TEMPO T
+WHERE B.IdBiglietto = F.IdBiglietto AND T.IdTempo = F.IdTempo
+GROUP BY B.Tipologia, T.Mese, T.Anno
+
+Query b)
+SELECT AVG(F.Incasso) AS IncassoMedio, 100* SUM(F.Incasso) / SUM(SUM(F.Incasso)) OVER (PARTITION BY M.Categoria) AS PercentualeIncasso, RANK() OVER (PARTITION BY B.Tipologia ORDER BY (COUNT(*) DESC))
+FROM BIGLIETTO B, MUSEO M, TEMPO T, FATTI FWHERE T.IdTempo = F.IdTempo AND M.IdMuseo = F.IdMuseo AND T.anno = '2021' AND B.IdBiglietto = F.IdBiglietto
+GROUP BY M.NomeMuseo, M.Categoria, B.Tipologia
+
+Task 3)
+3.1)
+CREATE MATERIALIZED VIEW AS V1
+SELECT B.Tipologia, T.Data, T.Mese, T.Anno,SUM(F.Incasso) AS IncTot,
+FROM BIGLIETTO B, TEMPO T, FATTI F
+WHERE F.IdBiglietto = B.IdBiglietto AND F.IdTempo = T.IdTempo
+GROUP BY B.Tipologia, T.Data, T.Mese, T.Anno
+3.2)
+CREATE MATERIALIZED VIEW LOG ON FATTI
+WITH SEQUENCE, ROWID(IdBiglietto, IdTempo, Incasso)
+INCLUDING NEW VALUES;
+
+CREATE MATERIALIZED VIEW LOG ON BIGLIETTO
+WITH SEQUENCE, ROWID(IdBiglietto, Tipologia)
+INCLUDING NEW VALUES;
+
+CREATE MATERIALIZED VIEW LOG ON TEMPO
+WITH SEQUENCE, ROWID(IdTempo, Data, Mese, Anno)
+INCLUDING NEW VALUES;
+3.3)
+Le operazioni sulla base dati che causano un aggiornamento sulla Materialized 
+View V1 sono le operazioni di INSERT, DELETE e UPDATE efettuate sulle tabelle
+FATTI, BIGLIETTO e TEMPO negli attributi presenti nei log.
+
+Task 4)
+4.1)
+CREATE TABLE V1 (Tipologia VARCHAR(20),Data DATE,Mese DATE,Anno INTEGER,IncTot INTEGER,PRIMARY KEY (Tipologia, Data, Mese, Anno));
+4.2)
+INSERT INTO V1 (Tipologia, Data, Mese, Anno, IncTot)(SELECT B.Tipologia, T.Data, T.Mese, T.Anno, SUM(F.Incasso) AS IncTot,
+FROM BIGLIETTO B, TEMPO T, FATTI F
+WHERE F.IdBiglietto = B.IdBiglietto AND F.IdTempo = T.IdTempo
+GROUP BY B.Tipologia, T.Data, T.Mese, T.Anno)
+
+4.3)
+CREATE TRIGGER InsertFatti
+AFTER INSERT ON FATTI
+FOR EACH ROW
+DECLARE VarTipologia VARCHAR(20); VarData DATE; VarMese DATE; VarAnno NUMBER; N NUMBER
+BEGIN
+	SELECT Tipologia INTO VarTipologia
+	FROM BIGLIETTO
+	WHERE IdBiglietto = :NEW.IdBiglietto
+
+	SELECT Data INTO VarData
+	FROM TEMPO
+	WHERE IdTempo = :NEW.IdTempo
+
+	SELECT Mese INTO VarMese
+	FROM TEMPO
+	WHERE IdTempo = :NEW.IdTempo
+
+	SELECT Anno INTO VarAnno
+	FROM TEMPO
+	WHERE IdTempo = :NEW.IdTempo
+
+	SELECT Count(*) INTO N
+	FROM V1
+	WHERE Data = VarData AND Mese = VarMese AND Anno=VarAnno AND Tipologia = VarTipologia
+
+	IF (N>0) THEN
+		UPDATE V1
+		SET IncTot = IncTot + :NEWIncasso
+		WHERE Data = VarData Mese= VarMese AND Anno = VarAnno AND Tipologia = VarTipologia;
+	ELSE
+	INSERT INTO V1 (Tipologia, Data, Mese, Anno, IncTot) VALUES (VarTipologia, VarMese, VarAnno, :NEW.Incasso);
+	ENDIF
+END
+4.4) Come da specijche del trigger, l’operazione che lo attiva è una 
+INSERT sulla tabella FATT
